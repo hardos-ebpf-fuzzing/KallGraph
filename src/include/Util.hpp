@@ -5,8 +5,8 @@
 #define DEFCONFIG 20
 #define ALLYESCONFIG 50
 
-#include "SVF-FE/LLVMUtil.h"
-#include "SVF-FE/SVFIRBuilder.h"
+#include "SVF-LLVM/LLVMUtil.h"
+#include "SVF-LLVM/SVFIRBuilder.h"
 #include <fstream>
 #include <string>
 

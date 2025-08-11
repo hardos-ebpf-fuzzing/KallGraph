@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5.1)
 project(KallGraph)
 
-set(ENV{LLVM_DIR} /path/to/llvm-14.0.6.build/lib/cmake)
+set(ENV{LLVM_DIR} /home/jinghao/kcfi-ebpf/llvm-project/build/lib/cmake)
 set(ENV{SVF_DIR} /path/to/KallGraph/SVF-2.5)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -36,7 +36,7 @@ if (EXISTS "${SVF_DIR}")
     #  MESSAGE(STATUS "FOOBAR env seen: --[${SVF_DIR}]--")
 
 else()
-    # MESSAGE(STATUS "FOOBAR env seen: --[$ENV{SVF_DIR}]--")
+# MESSAGE(STATUS "FOOBAR env seen: --[$ENV{SVF_DIR}]--")
 
     set(SVF_DIR $ENV{SVF_DIR})
     if(EXISTS "${SVF_DIR}")
@@ -54,11 +54,16 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
     set(LLVMCudd "${SVF_DIR}/Debug-build/lib/CUDD/libCudd.a")
 else()
     MESSAGE (STATUS "building SVF in release mode")
-    set(SVF_LIB "${SVF_DIR}/Release-build/lib/libSvf.a")
-    set(LLVMCudd "${SVF_DIR}/Release-build/lib/CUDD/libCudd.a")
+    set(SVF_LIBCore "${SVF_DIR}/Release-build/lib/libSvfCore.a")
+    set(SVF_LIBLLVM "${SVF_DIR}/Release-build/lib/libSvfLLVM.a")
+    # set(LLVMCudd "${SVF_DIR}/Release-build/lib/CUDD/libCudd.a")
 endif()
 set(SVF_HEADER "${SVF_DIR}/include")
-include_directories(${SVF_HEADER})
+include_directories(
+    ${SVF_DIR}/Release-build/include
+    ${SVF_DIR}/svf/include
+    ${SVF_DIR}/svf-llvm/include
+)
 
 #set z3 env
 if (DEFINED Z3_DIR)
