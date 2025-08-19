@@ -1,5 +1,9 @@
 #include "../include/Util.hpp"
+#include "Port.hpp"
+#include "SVF-LLVM/BasicTypes.h"
+#include "SVFIR/SVFValue.h"
 #include <algorithm>
+#include <llvm/IR/Value.h>
 
 llvm::cl::opt<std::string> SpecifyInput(
     "SpecifyInput",
@@ -86,7 +90,7 @@ void getBlockedNodes(SVFIR *pag) {
 
   // llvm.compiler.used
   const auto LCU = pag->getGNode(4);
-  if (LCU->hasValue() && LCU->getValue()->hasName() &&
+  if (LCU->hasValue() && fromSVFValueToLLVMValue<Value>(LCU->getValue())->hasName() &&
       LCU->getValueName() == "llvm.compiler.used") {
     BlockedNodes.insert(4);
   }
@@ -100,7 +104,7 @@ void getBlockedNodes(SVFIR *pag) {
     if (!SVFCallee) {
       continue;
     }
-    auto callee = SVFCallee->getLLVMFun();
+    auto callee = fromSVFValueToLLVMValue<Function>(SVFCallee);
     Callees[callee]++;
     CalleeNodes[callee].insert(CallEdge->getDstID());
   }
@@ -122,7 +126,7 @@ void getBlockedNodes(SVFIR *pag) {
     if (!SVFCallee) {
       continue;
     }
-    auto callee = SVFCallee->getLLVMFun();
+    auto callee = fromSVFValueToLLVMValue<Function>(SVFCallee);
     Rets[callee]++;
     RetNodes[callee].insert(RetEdge->getSrcID());
   }
@@ -290,10 +294,11 @@ bool checkIfAddrTaken(SVFIR *pag, PAGNode *node) {
 
 void addSVFAddrFuncs(SVFModule *svfModule, SVFIR *pag) {
   for (auto F : *svfModule) {
-    auto funcnode = pag->getGNode(pag->getValueNode(F->getLLVMFun()));
+    const Function *llvmFun = fromSVFValueToLLVMValue<Function>(F);
+    auto funcnode = pag->getGNode(pag->getValueNode(F));
     addrvisited.clear();
     if (checkIfAddrTaken(pag, funcnode)) {
-      type2funcs[printType(F->getLLVMFun()->getType())].insert(F->getLLVMFun());
+      type2funcs[printType(llvmFun->getType())].insert(const_cast<Function *>(llvmFun));
     }
   }
 }
@@ -320,16 +325,16 @@ void handleAnonymousStruct(SVFModule *svfModule, SVFIR *pag) {
   for (auto ii = svfModule->global_begin(), ie = svfModule->global_end();
        ii != ie; ii++) {
     auto gv = *ii;
-    if (auto gvtype = ifPointToStruct(gv->getType())) {
+    if (auto gvtype = ifPointToStruct(fromSVFTypeToLLVMType(gv->getType()))) {
       if (getStructName(gvtype) == "") {
-        AnonymousTypeGVs[gvtype].insert(gv);
+        AnonymousTypeGVs[gvtype].insert(const_cast<GlobalVariable *>(fromSVFValueToLLVMValue<GlobalVariable>(gv)));
       }
     }
   }
   for (auto edge : pag->getSVFStmtSet(PAGEdge::Copy)) {
     if (edge->getSrcNode()->getType() && edge->getDstNode()->getType()) {
-      auto srcType = ifPointToStruct(edge->getSrcNode()->getType());
-      auto dstType = ifPointToStruct(edge->getDstNode()->getType());
+      auto srcType = ifPointToStruct(fromSVFTypeToLLVMType(edge->getSrcNode()->getType()));
+      auto dstType = ifPointToStruct(fromSVFTypeToLLVMType(edge->getDstNode()->getType()));
       if (srcType && dstType && (srcType != dstType)) {
         if (AnonymousTypeGVs.find(srcType) != AnonymousTypeGVs.end()) {
           if (getStructName(dstType) != "") {
@@ -497,7 +502,7 @@ StructType *gotStructSrc(PAGNode *node,
     return nullptr;
   }
   for (auto nxt : node->getIncomingEdges(PAGEdge::Copy)) {
-    if (auto nxtType = nxt->getSrcNode()->getType()) {
+    if (auto nxtType = fromSVFTypeToLLVMType(nxt->getSrcNode()->getType())) {
       if (nxtType->isPointerTy() && nxtType->getNumContainedTypes() > 0) {
         auto elemType = nxtType->getPointerElementType();
         while (elemType->isArrayTy()) {
@@ -537,7 +542,7 @@ void collectByteoffset(SVFIR *pag) {
         }
       }
     } else {
-      if (auto type = edge->getSrcNode()->getType()) {
+      if (auto type = fromSVFTypeToLLVMType(edge->getSrcNode()->getType())) {
         if (type->isPointerTy() && type->getNumContainedTypes() > 0) {
           auto elemType = type->getPointerElementType();
           while (elemType && elemType->isArrayTy()) {
@@ -576,7 +581,7 @@ void collectByteoffset(SVFIR *pag) {
             }
           }
         } else {
-          errs() << printVal(edge->getValue()) << "\n";
+          errs() << printVal(fromSVFValueToLLVMValue<Value>(edge->getValue())) << "\n";
         }
       }
     }
@@ -589,43 +594,45 @@ void processCastSites(SVFIR *pag, SVFModule *mod) {
   for (auto edge : pag->getSVFStmtSet(SVFStmt::Copy)) {
     if (edge->getSrcNode()->getType() != edge->getDstNode()->getType()) {
       if (edge->getSrcNode()->getType()) {
-        if (auto sttype = ifPointToStruct(edge->getSrcNode()->getType())) {
+        if (auto sttype = ifPointToStruct(fromSVFTypeToLLVMType(edge->getSrcNode()->getType()))) {
           castSites[getStructName(sttype)].insert(edge);
         }
       }
       if (edge->getDstNode()->getType()) {
-        if (auto sttype = ifPointToStruct(edge->getDstNode()->getType())) {
+        if (auto sttype = ifPointToStruct(fromSVFTypeToLLVMType(edge->getDstNode()->getType()))) {
           castSites[getStructName(sttype)].insert(edge);
         }
       }
     }
   }
   for (auto func : *mod) {
-    auto llvmfunc = func->getLLVMFun();
+    auto llvmfunc = fromSVFValueToLLVMValue<Function>(func);
     for (auto &bb : *llvmfunc) {
       for (auto &inst : bb) {
         if (auto call = dyn_cast<CallInst>(&inst)) {
           if (call->getCalledFunction() &&
               call->getCalledFunction()->getName().contains("llvm.memcpy")) {
-            Value *Dst = call->getArgOperand(0); // i8*
+            // Value *Dst = call->getArgOperand(0); // i8*
+            const SVFValue *Dst = fromLLVMValueToSVFValue<SVFValue>(call->getArgOperand(0));
             string dststr = "dst";
             auto dst_pg = pag->getGNode(pag->getValueNode(Dst));
             SVFStmt *dst_cast = nullptr;
             for (auto dst_dst : dst_pg->getIncomingEdges(SVFStmt::Copy)) {
               if (auto sttype =
-                      ifPointToStruct(dst_dst->getSrcNode()->getType())) {
+                      ifPointToStruct(fromSVFTypeToLLVMType(dst_dst->getSrcNode()->getType()))) {
                 dststr = getStructName(sttype);
                 dst_cast = dst_dst;
                 break;
               }
             }
-            Value *Src = call->getArgOperand(1); // i8*
+            // Value *Src = call->getArgOperand(1); // i8*
+            const SVFValue *Src = fromLLVMValueToSVFValue<SVFValue>(call->getArgOperand(1));
             string srcstr = "src";
             auto src_pg = pag->getGNode(pag->getValueNode(Src));
             SVFStmt *src_cast = nullptr;
             for (auto src_src : src_pg->getIncomingEdges(SVFStmt::Copy)) {
               if (auto sttype =
-                      ifPointToStruct(src_src->getSrcNode()->getType())) {
+                      ifPointToStruct(fromSVFTypeToLLVMType(src_src->getSrcNode()->getType()))) {
                 srcstr = getStructName(sttype);
                 src_cast = src_src;
                 break;
@@ -646,14 +653,15 @@ void readCallGraph(string filename, SVFModule *mod, SVFIR *pag) {
   unordered_map<string, CallInst *> callinstsmap;
   unordered_map<string, Function *> funcsmap;
   for (auto func : *mod) {
-    auto llvmfunc = func->getLLVMFun();
+    auto llvmfunc = fromSVFValueToLLVMValue<Function>(func);
     string funcname = llvmfunc->getName().str();
-    funcsmap[funcname] = llvmfunc;
+    funcsmap[funcname] = const_cast<Function *>(llvmfunc);
     for (auto &bb : *llvmfunc) {
       for (auto &inst : bb) {
         if (auto callinst = dyn_cast<CallInst>(&inst)) {
           if (callinst->isIndirectCall()) {
-            callinstsmap[to_string(pag->getValueNode(callinst))] = callinst;
+            callinstsmap[to_string(pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(callinst)))] = const_cast<CallInst *>(callinst);
+
           }
         }
       }
@@ -676,9 +684,9 @@ void readCallGraph(string filename, SVFModule *mod, SVFIR *pag) {
 
 void setupDependence(SVFIR *pag, SVFModule *mod) {
   for (auto func : *mod) {
-    auto llvmfunc = func->getLLVMFun();
+    auto llvmfunc = fromSVFValueToLLVMValue<Function>(func);
     for (auto &arg : llvmfunc->args()) {
-      if (auto pagnodenum = pag->getValueNode(&arg)) {
+      if (auto pagnodenum = pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(&arg))) {
         if (BlockedNodes.find(pagnodenum) == BlockedNodes.end()) {
           Param2Funcs[pagnodenum] = llvmfunc;
         }
@@ -690,9 +698,9 @@ void setupDependence(SVFIR *pag, SVFModule *mod) {
           if (callinst->isIndirectCall()) {
             for (int i = 0; i < callinst->arg_size(); i++) {
               auto arg = callinst->getArgOperand(i);
-              if (auto pagnodenum = pag->getValueNode(arg)) {
+              if (auto pagnodenum = pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(arg))) {
                 if (BlockedNodes.find(pagnodenum) == BlockedNodes.end()) {
-                  Arg2iCalls[pagnodenum] = callinst;
+                  Arg2iCalls[pagnodenum] = const_cast<CallInst *>(callinst);
                 }
               }
             }
@@ -714,7 +722,7 @@ void setupCallGraph(SVFIR *_pag) {
               _pag->hasValueNode(callee->getArg(i))) {
             const auto real = _pag->getValueNode(
                 callinst.first->getArgOperand(i)->stripPointerCasts());
-            const auto formal = _pag->getValueNode(callee->getArg(i));
+            const auto formal = _pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(callee->getArg(i)));
             Real2Formal[real].insert(formal);
             Formal2Real[formal].insert(real);
             for (auto &bb : *callee) {
@@ -723,9 +731,9 @@ void setupCallGraph(SVFIR *_pag) {
                   if (retinst->getNumOperands() != 0 &&
                       callee->getReturnType()->isPointerTy()) {
                     const auto retval =
-                        _pag->getValueNode(retinst->getReturnValue());
-                    Ret2Call[retval].insert(_pag->getValueNode(callinst.first));
-                    Call2Ret[_pag->getValueNode(callinst.first)].insert(retval);
+                        _pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(retinst->getReturnValue()));
+                    Ret2Call[retval].insert(_pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(callinst.first)));
+                    Call2Ret[_pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(callinst.first))].insert(retval);
                   }
                 }
               }
