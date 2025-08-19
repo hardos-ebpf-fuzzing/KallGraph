@@ -1,4 +1,6 @@
+#include "SVF-LLVM/BasicTypes.h"
 #include "SVF-LLVM/SVFIRBuilder.h"
+#include "SVFIR/SVFValue.h"
 #include "WPA/Andersen.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/LLVMContext.h"
@@ -15,6 +17,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <llvm/Support/Casting.h>
 #include <string>
 #include <sys/resource.h>
 #include <thread>
@@ -24,6 +27,7 @@
 
 #include "include/KallGraphAlgo.hpp"
 #include "include/Util.hpp"
+#include "include/Port.hpp"
 
 using namespace llvm;
 using namespace SVF;
@@ -84,11 +88,11 @@ void createOutputFolder() {
 unordered_set<CallInst *> callinsts;
 void getAllicalls(SVFModule *M) {
   for (auto func : *M) {
-    for (auto &bb : *(func->getLLVMFun())) {
+    for (auto &bb : *(fromSVFValueToLLVMValue<Function>(func))) {
       for (auto &inst : bb) {
         if (auto callins = dyn_cast<CallInst>(&inst)) {
           if (callins->isIndirectCall()) {
-            callinsts.insert(callins);
+            callinsts.insert(const_cast<CallInst *>(callins));
           }
         }
       }
@@ -121,7 +125,7 @@ void processTraces(SVFIR *pag) {
       }
     }
     for (auto icall : callinsts) {
-      if (traceNodes.find(pag->getValueNode(icall->getCalledOperand())) !=
+      if (traceNodes.find(pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(icall->getCalledOperand()))) !=
           traceNodes.end()) {
         traceiCalls.insert(icall);
       }
@@ -143,8 +147,8 @@ void processSELinuxhooks(SVFIR *pag, SVFModule *svfmod) {
   GlobalVariable *selinuxhooks = nullptr;
   for (auto ii = svfmod->global_begin(), ie = svfmod->global_end(); ii != ie;
        ii++) {
-    if ((*ii)->getName().str() == "selinux_hooks") {
-      selinuxhooks = *ii;
+    if ((*ii)->getName() == "selinux_hooks") {
+      selinuxhooks = const_cast<GlobalVariable *>(fromSVFValueToLLVMValue<GlobalVariable>(*ii));
     }
   }
   if (selinuxhooks == nullptr) {
@@ -159,18 +163,18 @@ void processSELinuxhooks(SVFIR *pag, SVFModule *svfmod) {
     }
   }
   for (auto icall : callinsts) {
-    if (SELinuxNodes.find(pag->getValueNode(icall->getCalledOperand())) !=
+    if (SELinuxNodes.find(pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(icall->getCalledOperand()))) !=
         SELinuxNodes.end()) {
       SELinuxicalls.insert(icall);
     }
   }
-  for (auto edge : pag->getGNode(pag->getValueNode(selinuxhooks))
+  for (auto edge : pag->getGNode(pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(selinuxhooks)))
                        ->getOutgoingEdges(PAGEdge::Gep)) {
     for (auto storein : edge->getDstNode()->getIncomingEdges(PAGEdge::Store)) {
       if (storein->getSrcNode()->hasValue() &&
-          isa<Function>(storein->getSrcNode()->getValue())) {
+          isa<Function>(fromSVFValueToLLVMValue<Function>(storein->getSrcNode()->getValue()))) {
         SELinuxfuncs.insert(
-            dyn_cast<Function>(storein->getSrcNode()->getValue()));
+            fromSVFValueToLLVMValue<Function>(storein->getSrcNode()->getValue()));
       }
     }
   }
@@ -202,7 +206,7 @@ unordered_set<CallInst *> *getSpecifyInput(SVFModule *svfmod) {
   }
   auto ret = new unordered_set<CallInst *>();
   for (auto func : *svfmod) {
-    for (auto &bb : *(func->getLLVMFun())) {
+    for (auto &bb : *(fromSVFValueToLLVMValue<Function>(func))) {
       for (auto &inst : bb) {
         if (auto icall = dyn_cast<CallInst>(&inst)) {
           if (icall->isIndirectCall()) {
@@ -210,7 +214,7 @@ unordered_set<CallInst *> *getSpecifyInput(SVFModule *svfmod) {
               auto path = dbginfo->getFilename().str() + ":" +
                           to_string(dbginfo->getLine());
               if (icalls.find(path) != icalls.end()) {
-                ret->insert(icall);
+                ret->insert(const_cast<CallInst *>(icall));
                 found_icalls.insert(path);
               }
             }
@@ -235,7 +239,7 @@ Algo *performAnalysis(Value *gv, SVFIR *pag) {
   }
   PNwithOffset firstLayer(0, true);
   unias->HistoryAwareStack.push(firstLayer);
-  auto pgnode = pag->getGNode(pag->getValueNode(gv));
+  auto pgnode = pag->getGNode(pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(gv)));
   unias->taskNode = pgnode;
   unias->ComputeAlias(pgnode, true);
   return unias;
@@ -247,7 +251,7 @@ void eachThread(SVFIR *pag, TaskContext &task) {
   if (auto dbginfo = icall->getDebugLoc()) {
     path = dbginfo->getFilename().str() + ":" + to_string(dbginfo->getLine());
   }
-  cout << pag->getValueNode(icall->getCalledOperand()->stripPointerCasts())
+  cout << pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(icall->getCalledOperand()->stripPointerCasts()))
        << " " << path << "\n";
   if (traceiCalls.find(icall) != traceiCalls.end()) {
     processTraceIcalls(icall, task.local);
@@ -258,8 +262,8 @@ void eachThread(SVFIR *pag, TaskContext &task) {
         performAnalysis(icall->getCalledOperand()->stripPointerCasts(), pag);
     for (auto alias : res->Aliases[0]) {
       if (alias->hasValue()) {
-        if (auto func = dyn_cast<Function>(alias->getValue())) {
-          if (alias->getId() == pag->getValueNode(func) &&
+        if (auto func = fromSVFValueToLLVMValue<Function>(alias->getValue())) {
+          if (alias->getId() == pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(func)) &&
               icall->arg_size() == func->arg_size()) {
             if (checkIfMatch(icall, func)) {
               if (task.local.localcallgraph.find(icall) ==
@@ -451,11 +455,11 @@ int main(int argc, char **argv) {
 
   SVFModule *svfModule =
       LLVMModuleSet::getLLVMModuleSet()->buildSVFModule(moduleNameVec);
-  svfModule->buildSymbolTableInfo();
+  // svfModule->buildSymbolTableInfo();
 
   ofstream fout(OutputDir + "/log");
-  SVFIRBuilder builder;
-  SVFIR *pag = builder.build(svfModule);
+  SVFIRBuilder builder(svfModule);
+  SVFIR *pag = builder.build();
   errs() << "pag built!\n";
   log_time("pag built", fout);
   baseNum = (moduleNameVec.size() > THRESHOLD) ? ALLYESCONFIG : DEFCONFIG;
