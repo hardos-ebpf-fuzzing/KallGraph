@@ -1,8 +1,9 @@
 #include "../include/KallGraphAlgo.hpp"
+#include "../include/Port.hpp"
 
 bool Algo::ifValidForTypebasedShortcut(PAGEdge *edge, u32_t threshold) {
   if (edge->getSrcNode()->getType()) {
-    if (auto sttype = ifPointToStruct(edge->getSrcNode()->getType())) {
+    if (auto sttype = ifPointToStruct(fromSVFTypeToLLVMType(edge->getSrcNode()->getType()))) {
       auto offset = gep2byteoffset[edge];
       if (typebasedShortcuts.find(getStructName(sttype)) !=
               typebasedShortcuts.end() &&
@@ -19,7 +20,7 @@ bool Algo::ifValidForTypebasedShortcut(PAGEdge *edge, u32_t threshold) {
 
 bool Algo::ifValidForCastSiteShortcut(PAGEdge *edge, u32_t threshold) {
   if (edge->getSrcNode()->getType()) {
-    if (auto sttype = ifPointToStruct(edge->getSrcNode()->getType())) {
+    if (auto sttype = ifPointToStruct(fromSVFTypeToLLVMType(edge->getSrcNode()->getType()))) {
       if (castSites[getStructName(sttype)].size() < threshold) {
         return true;
       }
@@ -261,7 +262,7 @@ void Algo::ComputeAlias(PAGNode *cur, bool state) {
           if (!taken && ifValidForTypebasedShortcut(edge, baseNum * baseNum)) {
             taken = true;
             unordered_set<PAGNode *> visitedShortcuts;
-            auto sttype = ifPointToStruct(edge->getSrcNode()->getType());
+            auto sttype = ifPointToStruct(fromSVFTypeToLLVMType(edge->getSrcNode()->getType()));
             const auto stname = getStructName(sttype);
             if (typebasedShortcuts.find(stname) != typebasedShortcuts.end() &&
                 typebasedShortcuts[stname].find(offset) !=
@@ -290,7 +291,7 @@ void Algo::ComputeAlias(PAGNode *cur, bool state) {
                   bool needVisitDst = false;
                   bool needVisitSrc = false;
                   if (auto castSrcTy = dstCast->getSrcNode()->getType()) {
-                    if (auto castSrcSt = ifPointToStruct(castSrcTy)) {
+                    if (auto castSrcSt = ifPointToStruct(fromSVFTypeToLLVMType(castSrcTy))) {
                       if (getStructName(castSrcSt) == stname) {
                         needVisitDst = true;
                       } else {
@@ -303,7 +304,7 @@ void Algo::ComputeAlias(PAGNode *cur, bool state) {
                     needVisitSrc = true;
                   }
                   if (auto castDstTy = dstCast->getDstNode()->getType()) {
-                    if (auto castDstSt = ifPointToStruct(castDstTy)) {
+                    if (auto castDstSt = ifPointToStruct(fromSVFTypeToLLVMType(castDstTy))) {
                       if (getStructName(castDstSt) == getStructName(sttype)) {
                         needVisitSrc = true;
                       } else {

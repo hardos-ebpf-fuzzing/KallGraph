@@ -2,6 +2,7 @@
 #define PORT_H
 
 #include "llvm/IR/Function.h"
+#include <llvm/IR/Type.h>
 #include <llvm/Support/Casting.h>
 #include "SVF-LLVM/LLVMModule.h"
 #include "SVFIR/SVFValue.h"
@@ -26,6 +27,14 @@ static inline const T *fromSVFValueToLLVMValue(const SVF::SVFValue *svfValue) {
 
     // SVFValue2LLVMValue
     return llvm::dyn_cast<T>(SVF::LLVMModuleSet::getLLVMModuleSet()->getLLVMValue(svfValue));
+}
+
+static inline const llvm::Type *fromSVFTypeToLLVMType(const SVF::SVFType *svfType) {
+    return SVF::LLVMModuleSet::getLLVMModuleSet()->getLLVMType(svfType);
+}
+
+static inline const SVF::SVFType *fromLLVMTypeToSVFType(const llvm::Type *llvmType) {
+    return SVF::LLVMModuleSet::getLLVMModuleSet()->getSVFType(llvmType);
 }
 
 #endif
