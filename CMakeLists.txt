@@ -59,8 +59,8 @@ else()
     # set(LLVMCudd "${SVF_DIR}/Release-build/lib/CUDD/libCudd.a")
 endif()
 set(SVF_HEADER "${SVF_DIR}/include")
-    ${SVF_DIR}/Release-build/include
 include_directories(
+    ${SVF_DIR}/Release-build/include
     ${SVF_DIR}/svf/include
     ${SVF_DIR}/svf-llvm/include
 )
