@@ -1,6 +1,7 @@
 #include "../include/Util.hpp"
 #include "Port.hpp"
 #include "SVF-LLVM/BasicTypes.h"
+#include "SVF-LLVM/LLVMModule.h"
 #include "SVFIR/SVFValue.h"
 #include <algorithm>
 #include <llvm/IR/Value.h>
@@ -229,9 +230,10 @@ bool deAnonymous = false;
 string getStructName(StructType *sttype) {
   auto origin_name = sttype->getStructName().str();
   if (origin_name.find(".anon.") != string::npos) {
-    const auto fieldNum = SymbolTableInfo::SymbolInfo()
-                              ->getStructInfoIter(sttype)
-                              ->second->getNumOfFlattenFields();
+    // const auto fieldNum = SymbolTableInfo::SymbolInfo()
+    //                           ->getStructInfoIter(sttype)
+    //                           ->second->getNumOfFlattenFields();
+    const auto fieldNum = LLVMModuleSet::getLLVMModuleSet()->getSVFType(sttype)->getTypeInfo()->getNumOfFlattenFields();
     auto stsize = LLVMUtil::getTypeSizeInBytes(sttype);
     return to_string(fieldNum) + "," + to_string(stsize);
   }
@@ -253,9 +255,7 @@ string getStructName(StructType *sttype) {
     if (deAnonymousStructs.find(sttype) != deAnonymousStructs.end()) {
       return deAnonymousStructs[sttype];
     } else {
-      const auto fieldNum = SymbolTableInfo::SymbolInfo()
-                                ->getStructInfoIter(sttype)
-                                ->second->getNumOfFlattenFields();
+      const auto fieldNum = LLVMModuleSet::getLLVMModuleSet()->getSVFType(sttype)->getTypeInfo()->getNumOfFlattenFields();
       auto stsize = LLVMUtil::getTypeSizeInBytes(sttype);
       return to_string(fieldNum) + "," + to_string(stsize);
     }
@@ -352,7 +352,7 @@ void handleAnonymousStruct(SVFModule *svfModule, SVFIR *pag) {
   }
   for (auto const edge : pag->getSVFStmtSet(PAGEdge::Gep)) {
     const auto gepstmt = dyn_cast<GepStmt>(edge);
-    if (auto callinst = dyn_cast<CallInst>(edge->getValue())) {
+    if (auto callinst = fromSVFValueToLLVMValue<CallInst>(edge->getValue())) {
       if (callinst->getCalledFunction()->getName().find("memset") ==
           string::npos) {
         if (callinst->arg_size() >= 2) {
@@ -417,7 +417,7 @@ long regularStructVisit(StructType *sttype, s32_t idx, PAGEdge *gep) {
   // ret byteoffset
   long ret = 0;
   const auto stinfo =
-      SymbolTableInfo::SymbolInfo()->getStructInfoIter(sttype)->second;
+      LLVMModuleSet::getLLVMModuleSet()->getSVFType(sttype)->getTypeInfo();
   u32_t lastOriginalType = 0;
   for (auto i = 0; i <= idx; i++) {
     if (stinfo->getOriginalElemType(i)) {
@@ -427,19 +427,20 @@ long regularStructVisit(StructType *sttype, s32_t idx, PAGEdge *gep) {
   // Cumulate previous byteoffset
   for (auto i = 0; i < lastOriginalType; i++) {
     if (stinfo->getOriginalElemType(i)) {
-      auto rtype = const_cast<Type *>(stinfo->getOriginalElemType(i));
+      auto rtype = const_cast<Type *>(fromSVFTypeToLLVMType(stinfo->getOriginalElemType(i)));
       ret += LLVMUtil::getTypeSizeInBytes(rtype);
     }
   }
   // Check if completed
   if (idx - lastOriginalType >= 0) {
     auto embType = stinfo->getOriginalElemType(lastOriginalType);
-    while (embType && embType->isArrayTy()) {
-      embType = embType->getArrayElementType();
+    auto llvmType = fromSVFTypeToLLVMType(embType);
+    while (llvmType && llvmType->isArrayTy()) {
+      llvmType = (llvmType)->getArrayElementType();
     }
-    if (embType && embType->isStructTy()) {
+    if (llvmType && llvmType->isStructTy()) {
       ret += regularStructVisit(
-          const_cast<StructType *>(dyn_cast<StructType>(embType)),
+          const_cast<StructType *>(dyn_cast<StructType>(llvmType)),
           idx - lastOriginalType, gep);
     }
   }
@@ -525,17 +526,17 @@ void collectByteoffset(SVFIR *pag) {
   for (auto const edge : pag->getSVFStmtSet(PAGEdge::Gep)) {
     gepIn[edge->getDstNode()] = edge;
     const auto gepstmt = dyn_cast<GepStmt>(edge);
-    if (auto callinst = dyn_cast<CallInst>(edge->getValue())) {
+    if (auto callinst = fromSVFValueToLLVMValue<CallInst>(edge->getValue())) {
       if (callinst->getCalledFunction()->getName().find("memset") ==
           string::npos) {
         unordered_set<PAGNode *> visitedNodes;
         if (auto sttype = gotStructSrc(edge->getSrcNode(), visitedNodes)) {
           gep2byteoffset[edge] =
-              regularStructVisit(sttype, gepstmt->getConstantFieldIdx(), edge);
+              regularStructVisit(sttype, gepstmt->getConstantStructFldIdx(), edge);
         } else {
           if (!gepstmt->isVariantFieldGep() && gepstmt->isConstantOffset() &&
               edge->getSrcNode()->getOutgoingEdges(PAGEdge::Gep).size() < 20) {
-            gep2byteoffset[edge] = gepstmt->getConstantFieldIdx();
+            gep2byteoffset[edge] = gepstmt->getConstantStructFldIdx();
           } else {
             variantGep.insert(edge);
           }
@@ -561,7 +562,7 @@ void collectByteoffset(SVFIR *pag) {
                 } else {
                   gep2byteoffset[edge] =
                       varStructVisit(const_cast<GEPOperator *>(
-                          dyn_cast<GEPOperator>(edge->getValue())));
+                          dyn_cast<GEPOperator>(fromSVFValueToLLVMValue<Value>(edge->getValue()))));
                 }
               } else {
                 assert(false && "no ther case 1");
@@ -574,7 +575,7 @@ void collectByteoffset(SVFIR *pag) {
               } else if (elemType->isStructTy()) {
                 gep2byteoffset[edge] =
                     regularStructVisit(dyn_cast<StructType>(elemType),
-                                       gepstmt->getConstantFieldIdx(), edge);
+                                       gepstmt->getConstantStructFldIdx(), edge);
               } else {
                 assert(false && "no other case 2");
               }
@@ -718,10 +719,10 @@ void setupCallGraph(SVFIR *_pag) {
       if (argsize == callee->arg_size()) {
         for (unsigned int i = 0; i < argsize; i++) {
           if (_pag->hasValueNode(
-                  callinst.first->getArgOperand(i)->stripPointerCasts()) &&
-              _pag->hasValueNode(callee->getArg(i))) {
+                  fromLLVMValueToSVFValue<SVFValue>(callinst.first->getArgOperand(i)->stripPointerCasts())) &&
+              _pag->hasValueNode(fromLLVMValueToSVFValue<SVFValue>(callee->getArg(i)))) {
             const auto real = _pag->getValueNode(
-                callinst.first->getArgOperand(i)->stripPointerCasts());
+                fromLLVMValueToSVFValue<SVFValue>(callinst.first->getArgOperand(i)->stripPointerCasts()));
             const auto formal = _pag->getValueNode(fromLLVMValueToSVFValue<SVFValue>(callee->getArg(i)));
             Real2Formal[real].insert(formal);
             Formal2Real[formal].insert(real);
@@ -765,8 +766,8 @@ unordered_map<const Type *, unordered_set<const Type *>> castmap;
 
 void processCastMap(SVFIR *pag) {
   for (auto edge : pag->getSVFStmtSet(PAGEdge::Copy)) {
-    if (auto srcType = edge->getSrcNode()->getType()) {
-      if (auto dstType = edge->getDstNode()->getType()) {
+    if (auto srcType = fromSVFTypeToLLVMType(edge->getSrcNode()->getType())) {
+      if (auto dstType = fromSVFTypeToLLVMType(edge->getDstNode()->getType())) {
         if (srcType != dstType) {
           castmap[srcType].insert(dstType);
           castmap[dstType].insert(srcType);
