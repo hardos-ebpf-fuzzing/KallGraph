@@ -7,7 +7,7 @@ file(GLOB KALL_SRC
 
 macro(setupEnv target)
 target_include_directories(${target} PUBLIC include/)
-    target_link_libraries(${target} ${SVF_LIBCore} ${SVF_LIBLLVM} ${llvm_libs} )
+    target_link_libraries(${target} ${SVF_LIBLLVM} ${SVF_LIBCore} ${llvm_libs} )
 set_target_properties(${target} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set_target_properties(${target} PROPERTIES
