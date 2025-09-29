@@ -228,6 +228,18 @@ string printType(const Type *val) {
 
 bool deAnonymous = false;
 string getStructName(StructType *sttype) {
+  if(sttype && (sttype->isLiteral() || !sttype->hasName())){
+    if (deAnonymous) {
+      if (deAnonymousStructs.find(sttype) != deAnonymousStructs.end()) {
+        return deAnonymousStructs[sttype];
+      } else {
+        const auto fieldNum = LLVMModuleSet::getLLVMModuleSet()->getSVFType(sttype)->getTypeInfo()->getNumOfFlattenFields();
+        auto stsize = LLVMUtil::getTypeSizeInBytes(sttype);
+        return to_string(fieldNum) + "," + to_string(stsize);
+      }
+    }
+    return "";
+  }
   auto origin_name = sttype->getStructName().str();
   if (origin_name.find(".anon.") != string::npos) {
     // const auto fieldNum = SymbolTableInfo::SymbolInfo()
@@ -249,15 +261,6 @@ string getStructName(StructType *sttype) {
       return origin_name;
     } else {
       return origin_name.substr(0, origin_name.rfind('.'));
-    }
-  }
-  if (deAnonymous) {
-    if (deAnonymousStructs.find(sttype) != deAnonymousStructs.end()) {
-      return deAnonymousStructs[sttype];
-    } else {
-      const auto fieldNum = LLVMModuleSet::getLLVMModuleSet()->getSVFType(sttype)->getTypeInfo()->getNumOfFlattenFields();
-      auto stsize = LLVMUtil::getTypeSizeInBytes(sttype);
-      return to_string(fieldNum) + "," + to_string(stsize);
     }
   }
   return "";
