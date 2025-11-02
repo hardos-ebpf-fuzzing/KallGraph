@@ -3,6 +3,7 @@
 #include "SVF-LLVM/BasicTypes.h"
 #include "SVF-LLVM/LLVMModule.h"
 #include "SVFIR/SVFValue.h"
+#include "llvm/Support/TypeSize.h"
 #include <algorithm>
 #include <llvm/IR/Value.h>
 
@@ -456,7 +457,22 @@ long regularStructVisit(StructType *sttype, s32_t idx, PAGEdge *gep) {
         if (GVs.empty()) return {};
         const DIType *DT = GVs.front()->getVariable()->getType();
         while (auto *Der = dyn_cast<DIDerivedType>(DT)) DT = Der->getBaseType();
-        if (auto *C = dyn_cast<DICompositeType>(DT)) return C->getName().str();
+        if (auto *C = dyn_cast<DICompositeType>(DT)) {
+          string cname=C->getName().str();
+          size_t pos = cname.rfind('.');
+
+          if (pos != std::string::npos)
+            cname.erase(pos);
+
+          if(C->getTag() == dwarf::DW_TAG_structure_type)
+            return "struct."+ cname;
+
+          else if(C->getTag() == dwarf::DW_TAG_union_type)
+            return "union."+ cname;
+          
+          else
+            return cname;
+        }
         return {};
       };
 
