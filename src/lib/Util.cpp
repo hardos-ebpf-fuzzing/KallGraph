@@ -228,7 +228,7 @@ string printType(const Type *val) {
 
 bool deAnonymous = false;
 string getStructName(StructType *sttype) {
-  if(sttype && (sttype->isLiteral() || !sttype->hasName())){
+  if(sttype && (sttype->isLiteral())){
     if (deAnonymous) {
       if (deAnonymousStructs.find(sttype) != deAnonymousStructs.end()) {
         return deAnonymousStructs[sttype];
@@ -447,7 +447,39 @@ long regularStructVisit(StructType *sttype, s32_t idx, PAGEdge *gep) {
           idx - lastOriginalType, gep);
     }
   }
-  const auto stname = getStructName(sttype);
+  auto stname = getStructName(sttype);
+
+    if(sttype && sttype->isLiteral()){
+      auto getCStructNameFromGV = [](const GlobalVariable *GV) -> std::string {
+        SmallVector<DIGlobalVariableExpression*, 1> GVs;
+        GV->getDebugInfo(GVs);
+        if (GVs.empty()) return {};
+        const DIType *DT = GVs.front()->getVariable()->getType();
+        while (auto *Der = dyn_cast<DIDerivedType>(DT)) DT = Der->getBaseType();
+        if (auto *C = dyn_cast<DICompositeType>(DT)) return C->getName().str();
+        return {};
+      };
+
+      if (const llvm::Value *V = fromSVFValueToLLVMValue<const llvm::Value>(gep->getValue())) {
+        // We want the base pointer of the GEP, then strip casts and find the global.
+        const Value *Base = V;
+        if (auto *GEP = dyn_cast<GEPOperator>(V)) {
+          Base = GEP->getPointerOperand();
+        } else if (auto *I = dyn_cast<GetElementPtrInst>(V)) {
+          Base = I->getPointerOperand();
+        }
+
+        Base = Base->stripPointerCasts();
+
+        if (auto *GV = dyn_cast<GlobalVariable>(Base)) {
+          std::string cname = getCStructNameFromGV(GV);
+          if (!cname.empty())
+            stname = "struct."+cname;
+        }
+
+      }
+    }
+
   if (stname != "") {
     typebasedShortcuts[stname][ret].insert(gep);
     reverseShortcuts[gep][ret].insert(stname);
