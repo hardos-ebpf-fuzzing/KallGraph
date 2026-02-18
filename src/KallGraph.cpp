@@ -11,8 +11,11 @@
 #include "llvm/Support/SystemUtils.h"
 
 #include <condition_variable>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <execinfo.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -28,9 +31,42 @@
 #include "include/KallGraphAlgo.hpp"
 #include "include/Util.hpp"
 #include "include/Port.hpp"
+#include "SVF-LLVM/KGDebug.h"
 
 using namespace llvm;
 using namespace SVF;
+
+// ===== DEBUG: SIGABRT handler for crash diagnostics =====
+// KGDebug thread_local variables are defined in SVF/svf-llvm/lib/KGDebug.cpp.
+// This handler prints their values when an assertion fires.
+namespace KGDebug {
+  void sigabrt_handler(int sig) {
+    fprintf(stderr, "\n========== KallGraph CRASH DIAGNOSTICS ==========\n");
+    fprintf(stderr, "Signal: %d (SIGABRT)\n", sig);
+    fprintf(stderr, "Phase:       %s\n", phase ? phase : "(null)");
+    fprintf(stderr, "Module:      %s\n", moduleName.c_str());
+    fprintf(stderr, "Function:    %s\n", funcName.c_str());
+    fprintf(stderr, "Instruction: %s\n", instDesc.c_str());
+    fprintf(stderr, "InstCounter: %lu\n", instCounter);
+    fprintf(stderr, "=================================================\n");
+
+    // Print backtrace
+    void* bt[64];
+    int bt_size = backtrace(bt, 64);
+    fprintf(stderr, "Backtrace (%d frames):\n", bt_size);
+    backtrace_symbols_fd(bt, bt_size, STDERR_FILENO);
+    fprintf(stderr, "=================================================\n");
+
+    // Re-raise to get core dump / default behavior
+    signal(SIGABRT, SIG_DFL);
+    raise(SIGABRT);
+  }
+
+  void install_handler() {
+    signal(SIGABRT, sigabrt_handler);
+  }
+}
+// ===== END DEBUG =====
 
 // Command line parameters.
 cl::list<std::string> InputFilenames(cl::Positional, cl::OneOrMore,
@@ -444,6 +480,8 @@ void printCallGraph(string filename) {
 }
 
 int main(int argc, char **argv) {
+  KGDebug::install_handler();
+
   int arg_num = 0;
   char **arg_value = new char *[argc];
   std::vector<std::string> moduleNameVec;
@@ -453,17 +491,25 @@ int main(int argc, char **argv) {
   delete[] arg_value;
   createOutputFolder();
 
+  KGDebug::phase = "buildSVFModule";
+  errs() << "[DEBUG] Starting buildSVFModule...\n";
   SVFModule *svfModule =
       LLVMModuleSet::getLLVMModuleSet()->buildSVFModule(moduleNameVec);
+  errs() << "[DEBUG] buildSVFModule complete.\n";
   // svfModule->buildSymbolTableInfo();
 
   ofstream fout(OutputDir + "/log");
+  KGDebug::phase = "SVFIRBuilder::build";
+  errs() << "[DEBUG] Starting SVFIRBuilder::build...\n";
   SVFIRBuilder builder(svfModule);
   SVFIR *pag = builder.build();
   errs() << "pag built!\n";
   log_time("pag built", fout);
+  KGDebug::phase = "initialize";
+  errs() << "[DEBUG] Starting initialize...\n";
   baseNum = (moduleNameVec.size() > THRESHOLD) ? ALLYESCONFIG : DEFCONFIG;
   initialize(pag, svfModule);
+  errs() << "[DEBUG] initialize complete.\n";
 
   std::deque<CallInst *> tasks;
   if (auto input = getSpecifyInput(svfModule)) {
