@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.5.1)
 project(KallGraph)
 
+# FIXME does LLVM_DIR really matter?... Plus, when we were building SVF
+# a variable with the same name points to something_like_below/../../
 set(ENV{LLVM_DIR} /home/jinghao/kcfi-ebpf/llvm-project/build/lib/cmake)
-set(ENV{SVF_DIR} /path/to/KallGraph/SVF-2.5)
+# set(ENV{SVF_DIR} /path/to/KallGraph/SVF-2.5)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (DEFINED ENV{LLVM_DIR})
