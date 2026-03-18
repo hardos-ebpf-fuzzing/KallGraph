@@ -469,7 +469,7 @@ long regularStructVisit(StructType *sttype, s32_t idx, PAGEdge *gep) {
 
           else if(C->getTag() == dwarf::DW_TAG_union_type)
             return "union."+ cname;
-          
+
           else
             return cname;
         }
